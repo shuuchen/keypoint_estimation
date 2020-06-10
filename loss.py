@@ -1,56 +1,152 @@
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
+import functools
+import torch.nn.functional as F
 
-class Sobel(nn.Module):
-    def __init__(self):
-        super(Sobel, self).__init__()
-        self.edge_conv = nn.Conv2d(1, 2, kernel_size=3, stride=1, padding=1, bias=False)
-        edge_kx = np.array([[1, 0, -1], [2, 0, -2], [1, 0, -1]])
-        edge_ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
-        edge_k = np.stack((edge_kx, edge_ky))
 
-        edge_k = torch.from_numpy(edge_k).float().view(2, 1, 3, 3)
-        self.edge_conv.weight = nn.Parameter(edge_k)
-        
-        for param in self.parameters():
-            param.requires_grad = False
+def reduce_loss(loss, reduction):
+    """Reduce loss as specified.
+    Args:
+        loss (Tensor): Elementwise loss tensor.
+        reduction (str): Options are "none", "mean" and "sum".
+    Return:
+        Tensor: Reduced loss tensor.
+    """
+    reduction_enum = F._Reduction.get_enum(reduction)
+    # none: 0, elementwise_mean:1, sum: 2
+    if reduction_enum == 0:
+        return loss
+    elif reduction_enum == 1:
+        return loss.mean()
+    elif reduction_enum == 2:
+        return loss.sum()
 
-    def forward(self, x):
-        out = self.edge_conv(x) 
-        out = out.contiguous().view(-1, 2, x.size(2), x.size(3))
-  
-        return out
 
-def depth_loss(labels, outputs):
+def weight_reduce_loss(loss, weight=None, reduction='mean', avg_factor=None):
+    """Apply element-wise weight and reduce loss.
+    Args:
+        loss (Tensor): Element-wise loss.
+        weight (Tensor): Element-wise weights.
+        reduction (str): Same as built-in losses of PyTorch.
+        avg_factor (float): Avarage factor when computing the mean of losses.
+    Returns:
+        Tensor: Processed loss values.
+    """
+    # if weight is specified, apply element-wise weight
+    if weight is not None:
+        loss = loss * weight
 
-    loss_depth = torch.log(torch.abs(outputs - labels) + 0.5).mean()
+    # if avg_factor is not specified, just reduce the loss
+    if avg_factor is None:
+        loss = reduce_loss(loss, reduction)
+    else:
+        # if reduction is mean, then average the loss by avg_factor
+        if reduction == 'mean':
+            loss = loss.sum() / avg_factor
+        # if reduction is 'none', then do nothing, otherwise raise an error
+        elif reduction != 'none':
+            raise ValueError('avg_factor can not be used with reduction="sum"')
+    return loss
 
-    return loss_depth
 
-def gradient_loss(labels, outputs):
-    
-    cos = nn.CosineSimilarity(dim=1, eps=0)
-    get_gradient = Sobel().cuda()
-    
-    ones = torch.ones(labels.size(0), 1, labels.size(2),labels.size(3)).float().cuda()
-    ones = torch.autograd.Variable(ones)
+def weighted_loss(loss_func):
+    """Create a weighted version of a given loss function.
+    To use this decorator, the loss function must have the signature like
+    `loss_func(pred, target, **kwargs)`. The function only needs to compute
+    element-wise loss without any reduction. This decorator will add weight
+    and reduction arguments to the function. The decorated function will have
+    the signature like `loss_func(pred, target, weight=None, reduction='mean',
+    avg_factor=None, **kwargs)`.
+    :Example:
+    >>> @weighted_loss
+    >>> def l1_loss(pred, target):
+    >>>     return (pred - target).abs()
+    >>> pred = torch.Tensor([0, 2, 3])
+    >>> target = torch.Tensor([1, 1, 1])
+    >>> weight = torch.Tensor([1, 0, 1])
+    >>> l1_loss(pred, target)
+    tensor(1.3333)
+    >>> l1_loss(pred, target, weight)
+    tensor(1.)
+    >>> l1_loss(pred, target, reduction='none')
+    tensor([1., 1., 2.])
+    >>> l1_loss(pred, target, weight, avg_factor=2)
+    tensor(1.5000)
+    """
 
-    depth_grad = get_gradient(labels)
-    output_grad = get_gradient(outputs)
-    depth_grad_dx = depth_grad[:, 0, :, :].contiguous().view_as(labels)
-    depth_grad_dy = depth_grad[:, 1, :, :].contiguous().view_as(labels)
-    output_grad_dx = output_grad[:, 0, :, :].contiguous().view_as(labels)
-    output_grad_dy = output_grad[:, 1, :, :].contiguous().view_as(labels)
+    @functools.wraps(loss_func)
+    def wrapper(pred,
+                target,
+                weight=None,
+                reduction='mean',
+                avg_factor=None,
+                **kwargs):
+        # get element-wise loss
+        loss = loss_func(pred, target, **kwargs)
+        loss = weight_reduce_loss(loss, weight, reduction, avg_factor)
+        return loss
 
-    depth_normal = torch.cat((-depth_grad_dx, -depth_grad_dy, ones), 1)
-    output_normal = torch.cat((-output_grad_dx, -output_grad_dy, ones), 1)
+    return wrapper
 
-    loss_dx = torch.log(torch.abs(output_grad_dx - depth_grad_dx) + 0.5).mean()
-    loss_dy = torch.log(torch.abs(output_grad_dy - depth_grad_dy) + 0.5).mean()
-    loss_normal = torch.abs(1 - cos(output_normal, depth_normal)).mean()
 
-    return loss_normal + (loss_dx + loss_dy)
+@weighted_loss
+def balanced_l1_loss(pred,
+                     target,
+                     beta=1.0,
+                     alpha=0.5,
+                     gamma=1.5,
+                     reduction='mean'):
+    assert beta > 0
+    assert pred.size() == target.size() and target.numel() > 0
 
-def normal_loss(labels, outputs):
-    pass
+    diff = torch.abs(pred - target)
+    b = np.e**(gamma / alpha) - 1
+    loss = torch.where(
+        diff < beta, alpha / b *
+        (b * diff + 1) * torch.log(b * diff / beta + 1) - alpha * diff,
+        gamma * diff + gamma / b - alpha * beta)
+
+    return loss
+
+
+class BalancedL1Loss(nn.Module):
+    """Balanced L1 Loss
+    arXiv: https://arxiv.org/pdf/1904.02701.pdf (CVPR 2019)
+    """
+
+    def __init__(self,
+                 alpha=0.5,
+                 gamma=1.5,
+                 beta=1.0,
+                 reduction='mean',
+                 loss_weight=1.0):
+        super(BalancedL1Loss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.beta = beta
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def forward(self,
+                pred,
+                target,
+                weight=None,
+                avg_factor=None,
+                reduction_override=None,
+                **kwargs):
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+        loss_bbox = self.loss_weight * balanced_l1_loss(
+            pred,
+            target,
+            weight,
+            alpha=self.alpha,
+            gamma=self.gamma,
+            beta=self.beta,
+            reduction=reduction,
+            avg_factor=avg_factor,
+            **kwargs)
+        return loss_bbox
+

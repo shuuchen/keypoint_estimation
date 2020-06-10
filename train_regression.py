@@ -7,6 +7,7 @@ import torch.nn as nn
 import numpy as np
 import pandas as pd
 
+from loss import BalancedL1Loss
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision.transforms import functional as F
@@ -57,7 +58,9 @@ def main(args):
 
 def train(args, model, optimizer, train_dataset, val_dataset):
 
-    criterion = nn.L1Loss()
+    criterion = BalancedL1Loss()
+    #criterion = nn.SmoothL1Loss()
+    #criterion = nn.L1Loss()
     #criterion = nn.MSELoss()
     
     # epoch-wise losses
