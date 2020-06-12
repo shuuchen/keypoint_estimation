@@ -28,7 +28,7 @@ def main(args):
         if args.val_image_path:
             val_dataset = SumitomoCADDS(file_path=args.val_image_path)
 
-        model = ResUNet(3, 1).to(device)
+        model = ResUNet(3, 8).to(device)
         #model = R2AttU_Net(3, 1).to(device)
         optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0003)
 
@@ -50,7 +50,7 @@ def main(args):
         if not args.resume or not os.path.isfile(args.resume):
             raise '=> resume not specified or no checkpoint found'
         test_dataset = SumitomoCADDS(file_path=args.test_image_path)
-        model = ResUNet(3, 1).to(device)
+        model = ResUNet(3, 8).to(device)
         #model = R2AttU_Net(3, 1).to(device)
         checkpoint = torch.load(args.resume)
         model.load_state_dict(checkpoint['state_dict'])
@@ -58,16 +58,18 @@ def main(args):
 
 def train(args, model, optimizer, train_dataset, val_dataset):
 
-    criterion = BalancedL1Loss()
+    #criterion = BalancedL1Loss()
     #criterion = nn.SmoothL1Loss()
     #criterion = nn.L1Loss()
-    #criterion = nn.MSELoss()
+    criterion = nn.MSELoss()
     
     # epoch-wise losses
     print(args.batch_size, 'train')
     dataloader = DataLoader(batch_size=args.batch_size, shuffle=True,
                             dataset=train_dataset, num_workers=args.workers)
-    writer = SummaryWriter()
+    writer = SummaryWriter('runs/mse_channel')
+    #dummy_input = torch.rand(16, 3, 256, 256).to(device)
+    #writer.add_graph(model, dummy_input)
     best_loss = args.best_loss
 
     for epoch in range(args.epochs):
@@ -78,7 +80,7 @@ def train(args, model, optimizer, train_dataset, val_dataset):
         for i, (images, labels) in enumerate(data_iterator):
         
             images = images.to(device)
-            labels = labels.to(device)
+            labels = labels.to(device).float()
 
             outputs = model(images)
 
@@ -137,7 +139,7 @@ def evaluate(args, model, criterion, val_dataset, epo_no, writer):
         for images, labels in data_iterator:
 
             images = images.to(device)
-            labels = labels.to(device)
+            labels = labels.to(device).float()
             
             outputs = model(images)
             
@@ -149,12 +151,13 @@ def evaluate(args, model, criterion, val_dataset, epo_no, writer):
 
         if epo_no % 10 == 0:
             writer.add_images('images', images, epo_no)
-            writer.add_images('labels', labels, epo_no)
-            writer.add_images('outputs', outputs, epo_no)
+            writer.add_images('labels', torch.sum(labels, dim=1, keepdim=True), epo_no)
+            writer.add_images('outputs', torch.sum(outputs, dim=1, keepdim=True), epo_no)
             for i in range(8):
                 F.to_pil_image(images[i].cpu().detach()).save(f'./val_img_{epo_no}_{i}.png')
-                F.to_pil_image(labels[i].cpu().detach()).save(f'./val_lb_{epo_no}_{i}.png')
-                F.to_pil_image(outputs[i].cpu().detach()).save(f'./val_op_{epo_no}_{i}.png')
+                for j in range(8):
+                    F.to_pil_image(labels[i, j].cpu().detach().float()).save(f'./val_lb_{epo_no}_{i}_{j}.png')
+                    F.to_pil_image(outputs[i, j].cpu().detach().float()).save(f'./val_op_{epo_no}_{i}_{j}.png')
     
     return mean_val_loss
 

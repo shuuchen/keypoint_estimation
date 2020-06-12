@@ -36,6 +36,35 @@ class SumitomoCADDS(Dataset):
         im = im.resize((1024, 1024))
         return im
 
+    def _json2label_channel(self, json_file, num_channel=8, output_size=1024):
+        sphere = json.load(open(json_file, 'r'))
+        hms = np.zeros((num_channel, output_size, output_size), dtype=np.float64)
+        sigma = output_size / 64
+        size = 6*sigma + 3
+        x = np.arange(0, size, 1, float)
+        y = x[:, np.newaxis]
+        x0, y0 = 3*sigma + 1, 3*sigma + 1
+        g = np.exp(- ((x - x0) ** 2 + (y - y0) ** 2) / (2 * sigma ** 2))
+        
+        for p in sphere['keypoints'].values():
+            
+            if p['group'] == p['subgroup'] == 'pin':
+            
+                x, y = p['center_h_w']
+
+                ul = int(x - 3*sigma - 1), int(y - 3*sigma - 1)
+                br = int(x + 3*sigma + 2), int(y + 3*sigma + 2)
+
+                c,d = max(0, -ul[0]), min(br[0], output_size) - ul[0]
+                a,b = max(0, -ul[1]), min(br[1], output_size) - ul[1]
+
+                cc,dd = max(0, ul[0]), min(br[0], output_size)
+                aa,bb = max(0, ul[1]), min(br[1], output_size)
+
+                hms[p['index_in_subgroup'], aa:bb,cc:dd] = np.maximum(hms[p['index_in_subgroup'], aa:bb,cc:dd], g[a:b,c:d])
+
+        return hms
+
     # label rendering
     def _json2label(self, json_file, output_size=1024):
         sphere = json.load(open(json_file, 'r'))
@@ -67,12 +96,22 @@ class SumitomoCADDS(Dataset):
         crop_label = label.crop((c * 256, r * 256, (c+1) * 256, (r+1) * 256))
         return crop_img, crop_label
 
+    # random crop channel
+    # img: PIL Image, label: numpy array
+    def _random_crop16_channel(self, img, label):
+        i = np.random.randint(0, 16)
+        r, c = i // 4, i % 4
+        crop_img = img.crop((c * 256, r * 256, (c+1) * 256, (r+1) * 256))
+        crop_label = label[:, r * 256: (r+1) * 256, c * 256: (c+1) * 256]
+        return crop_img, crop_label
+
+
     def __getitem__(self, index):
         
         image = self._read_img(self.img_dir / f'{self.list[index]}.npy')
-        label = self._json2label(self.label_dir / f'{self.list[index]}.json')
+        label = self._json2label_channel(self.label_dir / f'{self.list[index]}.json')
 
-        image, label = self._random_crop16(image, label)
+        image, label = self._random_crop16_channel(image, label)
 
         if self.train and self.augment:
             
@@ -88,4 +127,4 @@ class SumitomoCADDS(Dataset):
           # random crops
           #scale_augmentation(image, label)
 
-        return F.to_tensor(image), F.to_tensor(label)
+        return F.to_tensor(image), torch.from_numpy(label)
