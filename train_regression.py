@@ -49,11 +49,12 @@ def main(args):
             raise '=> test data path should be specified'
         if not args.resume or not os.path.isfile(args.resume):
             raise '=> resume not specified or no checkpoint found'
-        test_dataset = SumitomoCADDS(file_path=args.test_image_path)
+        test_dataset = SumitomoCADDS(file_path=args.test_image_path, test=True)
         model = ResUNet(3, 8).to(device)
         #model = R2AttU_Net(3, 1).to(device)
         checkpoint = torch.load(args.resume)
         model.load_state_dict(checkpoint['state_dict'])
+        print(f'Successfully loaded model from {args.resume}')
         test(args, model, test_dataset)
 
 def train(args, model, optimizer, train_dataset, val_dataset):
@@ -162,19 +163,16 @@ def evaluate(args, model, criterion, val_dataset, epo_no, writer):
     return mean_val_loss
 
 def test(args, model, test_dataset):
-    
     dataloader = DataLoader(batch_size=1, dataset=test_dataset, num_workers=args.workers)
-    
     model.eval()
     with torch.no_grad():
         data_iterator = tqdm(dataloader, total=len(test_dataset) // args.batch_size + 1)
-        for images, labels in data_iterator:
-
+        for img_no, images in enumerate(data_iterator):
+            images = images.squeeze(0)
             images = images.to(device)
-            labels = labels.to(device)
-
             outputs = model(images)
-            np.save('xxx.npy', outputs)
+            for i in range(16):
+                F.to_pil_image(torch.sum(outputs[i], dim=0).cpu().detach().float()).save(f'./test_{img_no}_{i}.png')
 
 
 if __name__ == '__main__':

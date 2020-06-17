@@ -11,19 +11,22 @@ from torchvision import transforms
 #from image_augment_pairs import *
 
 class SumitomoCADDS(Dataset):
-    def __init__(self, file_path, train=True, augment=False):
+    def __init__(self, file_path, train=True, augment=False, test=False):
         self.file_path = file_path
         self.augment = augment
         self.train = train
+        self.test = test
         
         with open(file_path) as f:
             self.list = f.readlines()
         f.close()
         
         self.list = [l[:-1] for l in self.list]
-        
-        self.img_dir = Path('../../data/sumitomo_cad/00_img')
-        self.label_dir = Path('../../data/sumitomo_cad/40_spheres_center')
+        if self.test:
+            self.img_dir = Path('./test/21_masked_png/')
+        else:      
+            self.img_dir = Path('../../data/sumitomo_cad/00_img')
+            self.label_dir = Path('../../data/sumitomo_cad/40_spheres_center')
 
     def __len__(self):
         return len(self.list)
@@ -96,6 +99,15 @@ class SumitomoCADDS(Dataset):
         crop_label = label.crop((c * 256, r * 256, (c+1) * 256, (r+1) * 256))
         return crop_img, crop_label
 
+    # random crop
+    def _crop16_test(self, img):
+        crop_imgs = []
+        for i in range(16):
+            r, c = i // 4, i % 4
+            crop_img = img.crop((c * 256, r * 256, (c+1) * 256, (r+1) * 256))
+            crop_imgs += [F.to_tensor(crop_img).unsqueeze(0)]
+        return torch.cat(crop_imgs)
+
     # random crop channel
     # img: PIL Image, label: numpy array
     def _random_crop16_channel(self, img, label):
@@ -108,10 +120,14 @@ class SumitomoCADDS(Dataset):
 
     def __getitem__(self, index):
         
-        image = self._read_img(self.img_dir / f'{self.list[index]}.npy')
-        label = self._json2label_channel(self.label_dir / f'{self.list[index]}.json')
 
-        image, label = self._random_crop16_channel(image, label)
+        if self.test:
+            image = Image.open(self.img_dir / f'{self.list[index]}.png')
+            return self._crop16_test(image)
+        else: 
+            image = self._read_img(self.img_dir / f'{self.list[index]}.npy')
+            label = self._json2label_channel(self.label_dir / f'{self.list[index]}.json')
+            image, label = self._random_crop16_channel(image, label)
 
         if self.train and self.augment:
             
