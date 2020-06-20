@@ -150,3 +150,26 @@ class BalancedL1Loss(nn.Module):
             **kwargs)
         return loss_bbox
 
+class ReducedFocalLoss(nn.Module):
+    """Reduced focal loss
+    arXiv: https://arxiv.org/pdf/1808.01244.pdf
+    """
+
+    def __init__(self,
+                 alpha=2.0,
+                 beta=4.0,
+                 reduction='mean'):
+        super(ReducedFocalLoss, self).__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.reduction = reduction
+
+    def forward(self,
+                pred,
+                target):
+        loss = -torch.where(target == 1, 
+                     (1-pred)**self.alpha*torch.log(pred), 
+                     (1-target)**self.beta*(pred)**self.alpha*torch.log(1-pred))
+        if self.redection == 'mean':
+            loss = loss.mean()
+        return loss
