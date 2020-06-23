@@ -170,6 +170,38 @@ class ReducedFocalLoss(nn.Module):
         loss = -torch.where(target == 1, 
                      (1-pred)**self.alpha*torch.log(pred), 
                      (1-target)**self.beta*(pred)**self.alpha*torch.log(1-pred))
-        if self.redection == 'mean':
-            loss = loss.mean()
+        n = loss.eq(1).sum()
+        loss = loss.sum()
+        return loss / n if n > 0 else loss
+
+class _ReducedFocalLoss(nn.Module):
+    """Reduced focal loss
+    arXiv: https://arxiv.org/pdf/1808.01244.pdf
+    """
+    def __init__(self, alpha=2.0, beta=4.0, reduction='mean'):
+        super(ReducedFocalLoss, self).__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.reduction = reduction
+
+    def forward(self, pred, gt):
+
+        pos_inds = gt.eq(1).float()
+        neg_inds = gt.lt(1).float()
+
+        neg_weights = torch.pow(1 - gt, 4)
+
+        loss = 0
+
+        pos_loss = torch.log(pred) * torch.pow(1 - pred, 2) * pos_inds
+        neg_loss = torch.log(1 - pred) * torch.pow(pred, 2) * neg_weights * neg_inds
+
+        num_pos = pos_inds.float().sum()
+        pos_loss = pos_loss.sum()
+        neg_loss = neg_loss.sum()
+
+        if num_pos == 0:
+            loss = loss - neg_loss
+        else:
+            loss = loss - (pos_loss + neg_loss) / num_pos
         return loss

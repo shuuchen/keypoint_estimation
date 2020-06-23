@@ -123,7 +123,7 @@ class SumitomoCADDS(Dataset):
 
         if self.test:
             image = Image.open(self.img_dir / f'{self.list[index]}.png')
-            return self._crop16_test(image)
+            return self._crop16_test(image), f'{self.list[index]}.png'
         else: 
             image = self._read_img(self.img_dir / f'{self.list[index]}.npy')
             label = self._json2label_channel(self.label_dir / f'{self.list[index]}.json')

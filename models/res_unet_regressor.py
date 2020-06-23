@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from .cbam import *
 
 
 class ResUNet(nn.Module):
@@ -83,8 +82,10 @@ class ResUNet(nn.Module):
         for i, up in enumerate(self.up_path):
             x = up(x, blocks[-i - 1])
 
-        return self.last(x)
-    
+        #return self.last(x)
+        x = torch.sigmoid(self.last(x))
+        #print(x.max(), x.eq(0).sum())
+        return torch.clamp(x, 1e-4, 1 - 1e-4)
 
 class UNetResConvBlock(nn.Module):
     def __init__(self, in_size, out_size, padding, batch_norm, use_cbam=False):
@@ -105,11 +106,7 @@ class UNetResConvBlock(nn.Module):
         self.bn3 = bn(out_size)
         self.relu3 = nn.ReLU()
         
-        if use_cbam:
-            self.cbam = CBAM(out_size, 16 )
-        else:
-            self.cbam = None
-
+       
     def forward(self, x):
 
         x = self.conv1(x)
@@ -124,10 +121,6 @@ class UNetResConvBlock(nn.Module):
         
         out = self.conv3(out)
         out = self.bn3(out)
-        
-        
-        if self.cbam:
-            out = self.cbam(out)
         
         out += identity
         out = self.relu3(out)

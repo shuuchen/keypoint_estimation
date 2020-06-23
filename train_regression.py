@@ -1,4 +1,5 @@
 import os
+import cv2
 import argparse
 import torch
 
@@ -7,7 +8,7 @@ import torch.nn as nn
 import numpy as np
 import pandas as pd
 
-from loss import BalancedL1Loss
+from loss import BalancedL1Loss, ReducedFocalLoss
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision.transforms import functional as F
@@ -22,8 +23,8 @@ def main(args):
     if args.task == 'train':
         if not args.train_image_path:
             raise 'train data path should be specified !'
-        train_dataset = SumitomoCADDS(file_path=args.train_image_path,
-                                      augment=args.augment)
+        train_dataset = SumitomoCADDS(file_path=args.train_image_path)
+        #train_dataset = SumitomoCADDS(file_path=args.val_image_path)
 
         if args.val_image_path:
             val_dataset = SumitomoCADDS(file_path=args.val_image_path)
@@ -60,15 +61,16 @@ def main(args):
 def train(args, model, optimizer, train_dataset, val_dataset):
 
     #criterion = BalancedL1Loss()
+    criterion = ReducedFocalLoss()
     #criterion = nn.SmoothL1Loss()
     #criterion = nn.L1Loss()
-    criterion = nn.MSELoss()
+    #criterion = nn.MSELoss()
     
     # epoch-wise losses
     print(args.batch_size, 'train')
     dataloader = DataLoader(batch_size=args.batch_size, shuffle=True,
                             dataset=train_dataset, num_workers=args.workers)
-    writer = SummaryWriter('runs/mse_channel')
+    writer = SummaryWriter('runs/rfl_channel_du')
     #dummy_input = torch.rand(16, 3, 256, 256).to(device)
     #writer.add_graph(model, dummy_input)
     best_loss = args.best_loss
@@ -84,9 +86,10 @@ def train(args, model, optimizer, train_dataset, val_dataset):
             labels = labels.to(device).float()
 
             outputs = model(images)
-
+            #print(outputs.max(), outputs.min())
             # loss
             train_loss = criterion(outputs, labels)
+            #print(outputs.eq(1).sum(), train_loss.item())
             batch_train_losses.append(train_loss.item())
         
             # backward
@@ -130,7 +133,7 @@ def evaluate(args, model, criterion, val_dataset, epo_no, writer):
     
     losses = []
     print(args.batch_size, 'eval')
-    dataloader = DataLoader(batch_size=args.batch_size,
+    dataloader = DataLoader(batch_size=args.batch_size, shuffle=True,
                             dataset=val_dataset, num_workers=args.workers)
     
     model.eval()
@@ -162,17 +165,30 @@ def evaluate(args, model, criterion, val_dataset, epo_no, writer):
     
     return mean_val_loss
 
+def stitch_test_results(outputs, fname):
+    img = np.zeros((1024, 1024), dtype=np.uint8)
+    for i in range(16):
+        x = torch.sum(outputs[i], dim=0).cpu().detach().float()
+        r, c = i // 4, i % 4
+        img[r*256:(r+1)*256, c*256:(c+1)*256] = x.numpy()
+    img = cv2.dilate(img, np.ones((15,15), dtype=np.uint8))
+    cv2.imwrite(f'./{fname}', img)
+
 def test(args, model, test_dataset):
     dataloader = DataLoader(batch_size=1, dataset=test_dataset, num_workers=args.workers)
     model.eval()
     with torch.no_grad():
         data_iterator = tqdm(dataloader, total=len(test_dataset) // args.batch_size + 1)
-        for img_no, images in enumerate(data_iterator):
+        for img_no, (images, fname) in enumerate(data_iterator):
             images = images.squeeze(0)
             images = images.to(device)
             outputs = model(images)
+            stitch_test_results(outputs, fname[0])
+            '''
             for i in range(16):
-                F.to_pil_image(torch.sum(outputs[i], dim=0).cpu().detach().float()).save(f'./test_{img_no}_{i}.png')
+                F.to_pil_image(images[i].cpu().detach()).save(f'./val_img_{img_no}_{i}.png')
+                F.to_pil_image(outputs[i].cpu().detach()).save(f'./val_op_{img_no}_{i}.png')
+            '''
 
 
 if __name__ == '__main__':
