@@ -114,6 +114,11 @@ class HRBlock(nn.Module):
 
 
 class HRNet(nn.Module):
+	'''
+	Deep High-Resolution Representation Learning for Visual Recognition
+	https://arxiv.org/pdf/1908.07919.pdf
+	2020
+	'''
 	def __init__(self, in_ch, mid_ch, out_ch, num_stage=4):
 		super(HRNet, self).__init__()
 		self.init_conv = nn.Conv2d(in_ch, mid_ch, 1)
