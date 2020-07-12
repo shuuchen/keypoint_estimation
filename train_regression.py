@@ -13,7 +13,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision.transforms import functional as F
 from models.res_unet_regressor import ResUNet
-from dataloader_regressor import SumitomoCADDS
+#from dataloader_regressor import SumitomoCADDS
+from dataloader import SumitomoCADDS
 from tqdm import tqdm
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -27,7 +28,7 @@ def main(args):
         #train_dataset = SumitomoCADDS(file_path=args.val_image_path)
 
         if args.val_image_path:
-            val_dataset = SumitomoCADDS(file_path=args.val_image_path)
+            val_dataset = SumitomoCADDS(file_path=args.val_image_path, val=True)
 
         model = ResUNet(3, 8).to(device)
         #model = R2AttU_Net(3, 1).to(device)
@@ -70,7 +71,7 @@ def train(args, model, optimizer, train_dataset, val_dataset):
     print(args.batch_size, 'train')
     dataloader = DataLoader(batch_size=args.batch_size, shuffle=True,
                             dataset=train_dataset, num_workers=args.workers)
-    writer = SummaryWriter('runs/rfl_channel_du')
+    writer = SummaryWriter('runs/rfl_channel_du2')
     #dummy_input = torch.rand(16, 3, 256, 256).to(device)
     #writer.add_graph(model, dummy_input)
     best_loss = args.best_loss
@@ -81,10 +82,8 @@ def train(args, model, optimizer, train_dataset, val_dataset):
         data_iterator = tqdm(dataloader, total=len(train_dataset) // args.batch_size + 1)
         model.train()
         for i, (images, labels) in enumerate(data_iterator):
-        
-            images = images.to(device)
+            images = images.to(device).float()
             labels = labels.to(device).float()
-
             outputs = model(images)
             #print(outputs.max(), outputs.min())
             # loss
@@ -140,13 +139,11 @@ def evaluate(args, model, criterion, val_dataset, epo_no, writer):
     with torch.no_grad():
         print('evaluating...')
         data_iterator = tqdm(dataloader, total=len(val_dataset) // args.batch_size + 1)
-        for images, labels in data_iterator:
-
-            images = images.to(device)
+        for images, labels, fname in data_iterator:
+            images = images.to(device).float()
             labels = labels.to(device).float()
             
             outputs = model(images)
-            
             # loss
             loss = criterion(outputs, labels)
             losses.append(loss.item())
@@ -158,7 +155,7 @@ def evaluate(args, model, criterion, val_dataset, epo_no, writer):
             writer.add_images('labels', torch.sum(labels, dim=1, keepdim=True), epo_no)
             writer.add_images('outputs', torch.sum(outputs, dim=1, keepdim=True), epo_no)
             for i in range(8):
-                F.to_pil_image(images[i].cpu().detach()).save(f'./val_img_{epo_no}_{i}.png')
+                F.to_pil_image(images[i].cpu().detach()).save(f'./{fname[i]}_{epo_no}_{i}.png')
                 for j in range(8):
                     F.to_pil_image(labels[i, j].cpu().detach().float()).save(f'./val_lb_{epo_no}_{i}_{j}.png')
                     F.to_pil_image(outputs[i, j].cpu().detach().float()).save(f'./val_op_{epo_no}_{i}_{j}.png')
@@ -174,21 +171,21 @@ def stitch_test_results(outputs, fname):
     img = cv2.dilate(img, np.ones((15,15), dtype=np.uint8))
     cv2.imwrite(f'./{fname}', img)
 
+
+# python train_regression.py --task test --test-image-path ../../data/sumitomo_cad/test.txt --resume res/rfl_channel_du/best_eval_model.pth.tar  --batch-size 1
 def test(args, model, test_dataset):
     dataloader = DataLoader(batch_size=1, dataset=test_dataset, num_workers=args.workers)
     model.eval()
     with torch.no_grad():
         data_iterator = tqdm(dataloader, total=len(test_dataset) // args.batch_size + 1)
         for img_no, (images, fname) in enumerate(data_iterator):
-            images = images.squeeze(0)
+            fname = fname[0]
+            images = images
             images = images.to(device)
-            outputs = model(images)
-            stitch_test_results(outputs, fname[0])
-            '''
-            for i in range(16):
-                F.to_pil_image(images[i].cpu().detach()).save(f'./val_img_{img_no}_{i}.png')
-                F.to_pil_image(outputs[i].cpu().detach()).save(f'./val_op_{img_no}_{i}.png')
-            '''
+            outputs = model(images.float())
+            #stitch_test_results(outputs, fname[0])
+            torch.save(images[0], f'./{fname}_im.pt')
+            torch.save(outputs[0], f'./{fname}_op.pt')
 
 
 if __name__ == '__main__':
