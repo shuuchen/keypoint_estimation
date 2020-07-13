@@ -13,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision.transforms import functional as F
 from models.res_unet_regressor import ResUNet
+from models.hrnet import HRNet
 #from dataloader_regressor import SumitomoCADDS
 from dataloader import SumitomoCADDS
 from tqdm import tqdm
@@ -30,7 +31,8 @@ def main(args):
         if args.val_image_path:
             val_dataset = SumitomoCADDS(file_path=args.val_image_path, val=True)
 
-        model = ResUNet(3, 8).to(device)
+        model = HRNet(3, 32, 8).to(device)
+        #model = ResUNet(3, 8).to(device)
         #model = R2AttU_Net(3, 1).to(device)
         optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0003)
 
@@ -71,7 +73,7 @@ def train(args, model, optimizer, train_dataset, val_dataset):
     print(args.batch_size, 'train')
     dataloader = DataLoader(batch_size=args.batch_size, shuffle=True,
                             dataset=train_dataset, num_workers=args.workers)
-    writer = SummaryWriter('runs/rfl_channel_du2')
+    writer = SummaryWriter('runs/rfl_hr')
     #dummy_input = torch.rand(16, 3, 256, 256).to(device)
     #writer.add_graph(model, dummy_input)
     best_loss = args.best_loss

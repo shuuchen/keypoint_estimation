@@ -7,7 +7,7 @@ class Conv(nn.Module):
 	def __init__(self, ch, kernel_size=3, padding=1):
 		super(Conv, self).__init__()
 		self.conv = nn.Conv2d(ch, ch, kernel_size, padding=padding)
-		self.bn = nn.BatchNorm2d(out_ch)
+		self.bn = nn.BatchNorm2d(ch)
 		self.relu = nn.ReLU()
 	def forward(self, x):
 		x = self.conv(x)
@@ -40,7 +40,7 @@ class ConvBlock(nn.Module):
 class UpSampling(nn.Module):
 	def __init__(self, ch, up_factor):
 		super(UpSampling, self).__init__()
-		self.up = nn.UpSample(scale_factor=up_factor, mode='bilinear', align_corners=True)
+		self.up = nn.Upsample(scale_factor=up_factor, mode='bilinear', align_corners=True)
 		self.conv = nn.Conv2d(ch * up_factor, ch, 1)
 	def forward(self, x):
 		x = self.up(x)
@@ -92,8 +92,9 @@ class HRBlock(nn.Module):
 	def forward(self, x_list):
 		parallel_res_list = []
 		for i in range(self.index):
+			x = x_list[i]
 			for j in range(self.num_conv_block_per_list - 1):
-				x = self.parallel_conv_blocks[i][j](x)
+				x = self.parallel_conv_lists[i][j](x)
 				if j == self.num_conv_block_per_list - 2:
 					parallel_res_list.append(x)
 		final_res_list = []
@@ -102,7 +103,7 @@ class HRBlock(nn.Module):
 				x = torch.sum(m(t) for t, m in zip(parallel_res_list, self.down_conv_lists[-1]))
 			else:
 				x = parallel_res_list[i]
-				x = self.paralllel_conv_lists[i][-1](x)
+				x = self.parallel_conv_lists[i][-1](x)
 
 				res_list = parallel_res_list[:i] + parallel_res_list[i+1:]
 				if i != self.index - 1:
@@ -135,7 +136,7 @@ class HRNet(nn.Module):
 		x = self.init_conv(x)
 		x_list = [x]
 		for i in range(self.num_stage):
-			x_list = self.hr_blocks(x_list)
+			x_list = self.hr_blocks[i](x_list)
 
 		res_list = [x_list[0]]
 		for t, m in zip(x_list[1:], self.up_convs):
