@@ -100,16 +100,21 @@ class HRBlock(nn.Module):
 		final_res_list = []
 		for i in range(self.index + 1):
 			if i == self.index:
-				x = torch.sum(m(t) for t, m in zip(parallel_res_list, self.down_conv_lists[-1]))
+				x = torch.stack([m(t) for t, m in zip(parallel_res_list, self.down_conv_lists[-1])])
+				x = torch.sum(x, dim=0)
 			else:
 				x = parallel_res_list[i]
 				x = self.parallel_conv_lists[i][-1](x)
-
-				res_list = parallel_res_list[:i] + parallel_res_list[i+1:]
 				if i != self.index - 1:
-					x += torch.sum(m(t) for t, m in zip(res_list, self.up_conv_lists[i]))
+					res_list = parallel_res_list[i+1:]
+					up_x = torch.stack([m(t) for t, m in zip(res_list, self.up_conv_lists[i])])
+					up_x = torch.sum(up_x, dim=0)
+					x += up_x
 				if i != 0:
-					x += torch.sum(m(t) for t, m in zip(res_list, self.down_conv_lists[i - 1]))
+					res_list = parallel_res_list[:i]
+					down_x = torch.stack([m(t) for t, m in zip(res_list, self.down_conv_lists[i - 1])])
+					down_x = torch.sum(down_x, dim=0)
+					x += down_x
 			final_res_list.append(x)
 		return final_res_list
 
@@ -120,11 +125,12 @@ class HRNet(nn.Module):
 	https://arxiv.org/pdf/1908.07919.pdf
 	2020
 	'''
-	def __init__(self, in_ch, mid_ch, out_ch, num_stage=4):
+	def __init__(self, in_ch, mid_ch, out_ch, num_stage=4, regressive=True):
 		super(HRNet, self).__init__()
 		self.init_conv = nn.Conv2d(in_ch, mid_ch, 1)
-		self.last_conv = nn.Conv2d(mid_ch, out_ch, 1)
+		self.last_conv = nn.Conv2d(mid_ch * (num_stage + 1), out_ch, 1)
 		self.num_stage = num_stage
+		self.regressive = regressive
 		self.hr_blocks = nn.ModuleList()
 		for i in range(num_stage):
 			self.hr_blocks.append(HRBlock(mid_ch, i + 1))
@@ -142,8 +148,7 @@ class HRNet(nn.Module):
 		for t, m in zip(x_list[1:], self.up_convs):
 			res_list.append(m(t))
 
-		x = torch.cat(res_list)
+		x = torch.cat(res_list, dim=1)
 		x = self.last_conv(x)
-
-		return x
+		return x if self.regressive else torch.sigmoid(x).clamp(1e-4, 1 - 1e-4)
 
