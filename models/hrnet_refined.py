@@ -6,14 +6,12 @@ from torch import nn
 class Conv(nn.Module):
 	def __init__(self, ch, kernel_size=3, padding=1):
 		super(Conv, self).__init__()
-		self.conv = nn.Conv2d(ch, ch, kernel_size, padding=padding)
-		self.bn = nn.BatchNorm2d(ch)
-		self.relu = nn.ReLU()
+		self.conv = nn.Sequential(
+			nn.Conv2d(ch, ch, kernel_size, padding=padding),
+			nn.BatchNorm2d(ch),
+			nn.ReLU())
 	def forward(self, x):
-		x = self.conv(x)
-		x = self.bn(x)
-		x = self.relu(x)
-		return x
+		return self.conv(x)
 
 
 class ConvBlock(nn.Module):
@@ -31,28 +29,31 @@ class ConvBlock(nn.Module):
 		x = self.conv(x)
 		x = self.bn(x)
 		x += identity
-		x = self.relu(x)
-		return x
+		return self.relu(x)
 
 
 class UpSampling(nn.Module):
 	def __init__(self, ch, up_factor):
 		super(UpSampling, self).__init__()
-		self.up = nn.Upsample(scale_factor=up_factor, mode='bilinear', align_corners=True)
-		self.conv = nn.Conv2d(ch * up_factor, ch, 1)
+		self.up = nn.Sequential(
+			nn.Upsample(scale_factor=up_factor, mode='bilinear'),
+			nn.Conv2d(ch * up_factor, ch, 1),
+			nn.BatchNorm2d(ch))
 	def forward(self, x):
-		x = self.up(x)
-		x = self.conv(x)
-		return x
+		return self.up(x)
 
 
 class DownSampling(nn.Module):
-	def __init__(self, ch):
+	def __init__(self, ch, is_last=False):
 		super(DownSampling, self).__init__()
-		self.down = nn.Conv2d(ch, ch * 2, 3, 2, 1)
+		self.down = nn.Sequential(
+			nn.Conv2d(ch, ch * 2, 3, 2, 1),
+			nn.BatchNorm2d(ch * 2))
+		self.relu = nn.ReLU()
+		self.is_last = is_last
 	def forward(self, x):
 		x = self.down(x)
-		return x
+		return x if self.is_last else self.relu(x)
 
 
 class HRBlock(nn.Module):
@@ -61,6 +62,7 @@ class HRBlock(nn.Module):
 		self.index = index
 		self.last_stage = last_stage
 		self.num_conv_block_per_list = num_conv_block_per_list
+		self.relu = nn.ReLU()
 
 		self.parallel_conv_lists = nn.ModuleList()
 		for i in range(index):
@@ -85,7 +87,7 @@ class HRBlock(nn.Module):
 			for j in range(i):
 				conv_list_k = nn.ModuleList()
 				for k in range(j, i):
-					conv_list_k.append(DownSampling(ch * 2**k))
+					conv_list_k.append(DownSampling(ch * 2**k, k+1 == i))
 				conv_list.append(conv_list_k)
 			self.down_conv_lists.append(conv_list)
 
@@ -124,6 +126,7 @@ class HRBlock(nn.Module):
 					down_x = torch.stack(down_x)
 					down_x = torch.sum(down_x, dim=0)
 					x += down_x
+			x = self.relu(x)
 			final_res_list.append(x)
 		return final_res_list
 
@@ -136,17 +139,22 @@ class HRNet(nn.Module):
 	'''
 	def __init__(self, in_ch, mid_ch, out_ch, num_stage=4, regressive=True):
 		super(HRNet, self).__init__()
-		self.init_conv = nn.Conv2d(in_ch, mid_ch, 1)
-		self.last_conv = nn.Conv2d(mid_ch * (1 + 2 + 4 + 8), out_ch, 1)
+		self.init_conv = nn.Sequential(
+			nn.Conv2d(in_ch, mid_ch, 1),
+			nn.BatchNorm2d(mid_ch),
+			nn.ReLU())
+		self.head = nn.Conv2d(mid_ch * (1 + 2 + 4 + 8), out_ch, 1)
 		self.num_stage = num_stage
 		self.regressive = regressive
+
 		self.hr_blocks = nn.ModuleList()
 		for i in range(num_stage):
 			self.hr_blocks.append(HRBlock(mid_ch, i + 1, True if i == num_stage - 1 else False))
+
 		self.up_samplings = nn.ModuleList()
 		for i in range(num_stage - 1):
 			up_factor = 2 ** (i + 1)
-			up = nn.Upsample(scale_factor=up_factor, mode='bilinear', align_corners=True)
+			up = nn.Upsample(scale_factor=up_factor, mode='bilinear')
 			self.up_samplings.append(up)
 
 	def forward(self, x):
@@ -154,11 +162,12 @@ class HRNet(nn.Module):
 		x_list = [x]
 		for i in range(self.num_stage):
 			x_list = self.hr_blocks[i](x_list)
+
 		res_list = [x_list[0]]
 		for t, m in zip(x_list[1:], self.up_samplings):
 			res_list.append(m(t))
 
 		x = torch.cat(res_list, dim=1)
-		x = self.last_conv(x)
+		x = self.head(x)
 		return x if self.regressive else torch.sigmoid(x).clamp(1e-4, 1 - 1e-4)
 
