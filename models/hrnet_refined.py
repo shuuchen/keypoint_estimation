@@ -17,22 +17,20 @@ class Conv(nn.Module):
 
 
 class ConvBlock(nn.Module):
-	def __init__(self, ch, resnet=True):
+	def __init__(self, ch):
 		super(ConvBlock, self).__init__()
 		self.conv1 = Conv(ch)
 		self.conv2 = Conv(ch)
 		self.conv = nn.Conv2d(ch, ch, 3, padding=1)
 		self.bn = nn.BatchNorm2d(ch)
 		self.relu = nn.ReLU()
-		self.resnet = resnet
 	def forward(self, x):
-		x = self.conv1(x)
 		identity = x
+		x = self.conv1(x)
 		x = self.conv2(x)
 		x = self.conv(x)
 		x = self.bn(x)
-		if self.resnet:
-			x += identity
+		x += identity
 		x = self.relu(x)
 		return x
 
